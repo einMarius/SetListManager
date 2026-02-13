@@ -6,11 +6,12 @@ from tkinter import filedialog, messagebox, ttk, simpledialog
 
 from openpyxl import load_workbook
 
-
 class SetlistManager:
 
     def __init__(self, root):
         self.root = root
+        style = ttk.Style(self.root)
+        style.theme_use("clam")
         self.root.title("MIDI Setlist Manager")
         self.root.geometry("1200x600")
 
@@ -21,6 +22,9 @@ class SetlistManager:
         self.all_midi_files = set()
         self.song_counts = {}
         self.used_midi_files = set()
+
+        self.search_var = tk.StringVar()
+        self.all_files_list = []  # ist im Prinzip das Gleiche wie all_midi_files, aber als Liste, da Reihenfolge wichtig!
 
         # Drag & Drop
         self.dragged_item = None
@@ -37,6 +41,18 @@ class SetlistManager:
         left_frame = tk.Frame(main_frame)
         left_frame.pack(side="left", fill="both", expand=True)
 
+        # Suchleiste
+        search_frame = tk.Frame(left_frame)
+        search_frame.pack(fill="x", pady=(0, 5))
+
+        tk.Label(search_frame, text="Suche:").pack(side="left")
+        search_entry = tk.Entry(search_frame, textvariable=self.search_var)
+        search_entry.pack(side="left", fill="x", expand=True, padx=(5, 0))
+
+        # bei jeder Eingabe filtern
+        self.search_var.trace_add("write", lambda *_: self.apply_song_filter())
+
+        # Listbox
         self.left_list = tk.Listbox(left_frame, selectmode=tk.SINGLE)
         self.left_list.pack(fill="both", expand=True)
 
@@ -95,12 +111,12 @@ class SetlistManager:
         self.left_list.delete(0, tk.END)
 
         files = sorted(f for f in os.listdir(folder) if f.lower().endswith((".mid", ".midi")))
+        self.all_files_list = files
+
         self.all_midi_files = set(files)
         self.song_counts = {f: 0 for f in files}  # reset counts
 
-        for f in files:
-            self.left_list.insert(tk.END, f)
-
+        self.apply_song_filter()
         self.rebuild_rest_tree()
 
     def populate_restliche_lieder(self):
@@ -137,21 +153,21 @@ class SetlistManager:
         file = self.left_list.get(sel)
         rnd = self.get_current_round()
         if rnd == self.max_rounds:
-            return
-
-        if file in self.used_midi_files:
-            return
+            return  # nicht in "Restliche Lieder" einfügen
 
         tree = self.round_trees[rnd]
         tree.insert("", "end", values=("", file))
         self.update_numbers(rnd)
 
-        self.used_midi_files.add(file)
+        # Count erhöhen (darf >1 werden)
+        if file not in self.song_counts:
+            self.song_counts[file] = 0
+        self.song_counts[file] += 1
+
         self.rebuild_rest_tree()
 
     def remove_from_round(self):
         rnd = self.get_current_round()
-
         if rnd == self.max_rounds:
             return
 
@@ -165,9 +181,24 @@ class SetlistManager:
         self.update_numbers(rnd)
 
         for file in removed:
-            self.used_midi_files.discard(file)
+            if file in self.song_counts and self.song_counts[file] > 0:
+                self.song_counts[file] -= 1
 
         self.rebuild_rest_tree()
+
+    def apply_song_filter(self):
+        query = self.search_var.get().strip().lower()
+
+        self.left_list.delete(0, tk.END)
+
+        if not query:
+            filtered = self.all_files_list
+        else:
+            # Substring-Suche: "rain" findet "Dancing in the rain"
+            filtered = [f for f in self.all_files_list if query in f.lower()]
+
+        for f in filtered:
+            self.left_list.insert(tk.END, f)
 
     # ---------------- Drag & Drop ----------------
 
@@ -272,7 +303,7 @@ class SetlistManager:
         for iid in tree_rest.get_children():
             tree_rest.delete(iid)
 
-        remaining = sorted(self.all_midi_files - self.used_midi_files)
+        remaining = sorted([f for f, c in self.song_counts.items() if c == 0])
         for f in remaining:
             tree_rest.insert("", "end", values=("", f))
 
